@@ -65,7 +65,7 @@ class ScanPage(QWidget):
             headers = {
                 "accept": "application/json",
                 # Add your API key here
-                "x-apikey": "YOUR_API_KEY",
+                "x-apikey": "8da69ff389ad791ebe9e588cff3258bdccc36a085cd4c225e2c177f534133f42",
             }
             files = {
                 "file": open(self.file_to_upload, "rb")
