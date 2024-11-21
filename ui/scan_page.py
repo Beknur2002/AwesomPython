@@ -1,5 +1,6 @@
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QFileDialog
 import requests
+import time  
 
 class ScanPage(QWidget):
     def __init__(self):
@@ -24,9 +25,15 @@ class ScanPage(QWidget):
         self.upload_button = QPushButton("Upload File to VirusTotal")
         self.upload_button.clicked.connect(self.upload_file_to_virustotal)
 
+        # Analyze button
+        self.analyze_button = QPushButton("Analyze File on VirusTotal")
+        self.analyze_button.clicked.connect(self.analyze_file_on_virustotal)
+        self.analyze_button.setEnabled(False)  # Делаем кнопку неактивной, пока файл не загружен
+
         # Result labels
         self.folder_result_label = QLabel("")
         self.file_result_label = QLabel("")
+        self.analysis_result_label = QLabel("")
 
         # Add widgets to layout
         layout.addWidget(self.folder_label)
@@ -35,8 +42,10 @@ class ScanPage(QWidget):
         layout.addWidget(self.file_button)
         layout.addWidget(self.start_scan_button)
         layout.addWidget(self.upload_button)
+        layout.addWidget(self.analyze_button)
         layout.addWidget(self.folder_result_label)
         layout.addWidget(self.file_result_label)
+        layout.addWidget(self.analysis_result_label)
 
         self.setLayout(layout)
 
@@ -74,10 +83,54 @@ class ScanPage(QWidget):
                 response = requests.post(url, headers=headers, files=files)
                 if response.status_code == 200:
                     result = response.json()
-                    self.file_result_label.setText(f"Upload successful! Scan ID: {result.get('data', {}).get('id', 'N/A')}")
+                    scan_id = result.get('data', {}).get('id', 'N/A')
+                    self.file_result_label.setText(f"Upload successful! Scan ID: {scan_id}")
+                    self.analysis_id = scan_id  # Сохраняем ID анализа
+                    self.analyze_button.setEnabled(True)  # Активируем кнопку анализа
                 else:
                     self.file_result_label.setText(f"Error: {response.status_code} - {response.text}")
             except Exception as e:
                 self.file_result_label.setText(f"Error: {str(e)}")
         else:
             self.file_result_label.setText("No file selected.")
+
+    def analyze_file_on_virustotal(self):
+        if hasattr(self, 'analysis_id'):
+            url = f"https://www.virustotal.com/api/v3/analyses/{self.analysis_id}"
+            headers = {
+                "accept": "application/json",
+                "x-apikey": "8da69ff389ad791ebe9e588cff3258bdccc36a085cd4c225e2c177f534133f42",
+            }
+            try:
+                while True:  # Проверяем статус анализа
+                    response = requests.get(url, headers=headers)
+                    if response.status_code == 200:
+                        result = response.json()
+                        status = result.get("data", {}).get("attributes", {}).get("status")
+                        if status == "completed":
+                            stats = result.get("data", {}).get("attributes", {}).get("stats", {})
+                            harmless = stats.get("harmless", 0)
+                            malicious = stats.get("malicious", 0)
+                            suspicious = stats.get("suspicious", 0)
+                            undetected = stats.get("undetected", 0)
+                            self.analysis_result_label.setText(
+                                f"Analysis Completed:\n"
+                                f"Harmless: {harmless}\n"
+                                f"Malicious: {malicious}\n"
+                                f"Suspicious: {suspicious}\n"
+                                f"Undetected: {undetected}"
+                            )
+                            break
+                        elif status == "queued":
+                            self.analysis_result_label.setText("Analysis in progress. Please wait...")
+                            time.sleep(5)
+                        else:
+                            self.analysis_result_label.setText(f"Analysis status: {status}")
+                            break
+                    else:
+                        self.analysis_result_label.setText(f"Error: {response.status_code} - {response.text}")
+                        break
+            except Exception as e:
+                self.analysis_result_label.setText(f"Error: {str(e)}")
+        else:
+            self.analysis_result_label.setText("No analysis ID available.")
