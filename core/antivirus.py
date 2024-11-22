@@ -25,6 +25,7 @@ class Antivirus:
             with open(file_path, "rb") as f:
                 file_data = f.read()
                 file_hash = hashlib.md5(file_data).hexdigest()
+                print("file_hash:",file_hash)
 
                 for signature, name, _ in virus_signatures:
                     if file_hash == signature:
