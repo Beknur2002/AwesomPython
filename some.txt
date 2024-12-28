@@ -1,0 +1,15 @@
+brew services start rabbitmq
+
+
+connection = pika.BlockingConnection(pika.ConnectionParameters(
+    host='localhost',
+    port=5672  # стандартный порт
+))
+
+tail -f /usr/local/var/log/rabbitmq/rabbit@<hostname>.log
+
+
+python3 -m venv venv
+source venv/bin/activate
+pip install psutil
+python main.py

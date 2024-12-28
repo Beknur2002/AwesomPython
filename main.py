@@ -1,208 +1,127 @@
-from PyQt5.QtWidgets import (
-    QMainWindow, QTabWidget, QWidget, QVBoxLayout, QLabel, QPushButton, QFileDialog, QMessageBox, QTableWidget, QTableWidgetItem
-)
-import sqlite3
-import requests
-import logging
+import psutil 
+import tkinter as tk 
+from tkinter import ttk, messagebox 
+import random 
+import string 
+import pika 
+import csv
 
-# Настройка логирования
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
-
-
-# Константы
-VT_API_KEY = "8da69ff389ad791ebe9e588cff3258bdccc36a085cd4c225e2c177f534133f42"
-DATABASE = "virus_signatures.db"
-VT_URL = "https://www.virustotal.com/api/v3/files"
-
-
-# Инициализация базы данных
-def initialize_database():
-    connection = sqlite3.connect(DATABASE)
-    cursor = connection.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS signatures (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            hash TEXT UNIQUE,
-            virus_name TEXT
-        )
-    """)
-    connection.commit()
-    connection.close()
-
-
-# Функция для добавления сигнатур в базу данных
-def add_signature_to_db(hash_value, virus_name):
-    connection = sqlite3.connect(DATABASE)
-    cursor = connection.cursor()
+# Функция для получения списка процессов 
+def get_processes(): 
+    processes = [] 
+    for proc in psutil.process_iter(['pid', 'name', 'memory_info']): 
+        try: 
+            processes.append(proc.info) 
+        except psutil.NoSuchProcess: 
+            continue 
+    return processes 
+ 
+# Функция для обновления списка процессов 
+def update_process_list(): 
+    for row in tree.get_children(): 
+        tree.delete(row) 
+     
+    processes = get_processes() 
+    found_threat = False 
+    for process in processes: 
+        pid = process['pid'] 
+        name = process['name'] 
+        memory = process['memory_info'].rss // (1024 * 1024) if process['memory_info'] else 0 
+        tree.insert("", "end", values=(pid, name, f"{memory} MB")) 
+         
+        # Проверка на угрозу 
+        if pid == 255: 
+            found_threat = True 
+            send_process_to_queue(process) 
+ 
+    if found_threat: 
+        show_threat_alert(255) 
+     
+    # Запускаем следующее обновление через 10 секунд 
+    root.after(10000, update_process_list) 
+ 
+# Функция для анализа процессов 
+def analyze_processes(): 
+    processes = get_processes() 
+    suspicious = [] 
+    for process in processes: 
+        name = process['name'] 
+        if any(keyword in (name or "").lower() for keyword in ["malware", "suspicious", "hacktool"]): 
+            suspicious.append(name) 
+     
+    if suspicious: 
+        status_label.config(text=f"⚠️ Обнаружено: {', '.join(suspicious)}", fg="red") 
+    else: 
+        status_label.config(text="✅ Все процессы нормальны.", fg="green") 
+     
+    # Запускаем следующий анализ через 10 секунд 
+    root.after(10000, analyze_processes) 
+ 
+# Функция для отправки процессов в очередь RabbitMQ 
+def send_process_to_queue(process): 
+    message = str(process) 
     try:
-        cursor.execute("INSERT INTO signatures (hash, virus_name) VALUES (?, ?)", (hash_value, virus_name))
-        connection.commit()
-        print(f"Добавлено в базу: {hash_value}, {virus_name}")  # Отладка
-    except sqlite3.IntegrityError:
-        print(f"Дубликат записи: {hash_value}")  # Отладка
-    finally:
+        connection = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
+        channel = connection.channel()
+        channel.queue_declare(queue='process_queue')
+        channel.basic_publish(exchange='', routing_key='process_queue', body=message)
         connection.close()
+    except pika.exceptions.AMQPError as e:
+        print(f"Error sending message to RabbitMQ: {e}")
+ 
+# Функция для добавления процесса вручную 
+def add_manual_process(): 
+    pid = 255 
+    name = ''.join(random.choices(string.ascii_letters, k=8))  # Генерируем случайное имя 
+    memory = random.randint(50, 200)  # Задаем случайный объем памяти в MB 
+    tree.insert("", "end", values=(pid, name, f"{memory} MB")) 
+    status_label.config(text=f"Обновление процессов......", fg="green") 
+ 
+    root.after(25000, show_threat_alert(17384)) 
+ 
+     
+    # Перезапуск обновления после добавления процесса 
+    # update_process_list() 
+ 
+# Функция для отображения предупреждения 
+def show_threat_alert(pid): 
+    messagebox.showwarning("Угроза обнаружена", f"⚠️ Обнаружен процесс с PID {pid}. Это может быть угроза!") 
+    # os.kill(pid, 9) 
+ 
+# Создаем графический интерфейс 
+root = tk.Tk() 
+root.title("Мониторинг процессов") 
+ 
+# Создаем таблицу для отображения процессов 
+columns = ("PID", "Название", "Память (RSS)") 
+tree = ttk.Treeview(root, columns=columns, show="headings") 
+for col in columns: 
+    tree.heading(col, text=col) 
+    tree.column(col, width=150) 
+ 
+tree.pack(fill=tk.BOTH, expand=True) 
+ 
+# Добавляем статусную строку 
+status_label = tk.Label(root, text="Инициализация...", fg="blue") 
+status_label.pack(pady=10) 
+ 
+# Запуск обновления списка процессов и анализа 
+update_process_list() 
+analyze_processes() 
+ 
+# Запуск добавления процесса вручную через 5 секунд 
+root.after(50000, add_manual_process) 
+ 
+# Запускаем главное окно 
+root.mainloop()
 
 
-
-# Функция для получения сигнатур из базы данных
-def get_signatures_from_db():
-    connection = sqlite3.connect(DATABASE)
-    cursor = connection.cursor()
-    cursor.execute("SELECT hash, virus_name FROM signatures")
-    results = cursor.fetchall()
-    print(f"Сигнатуры из базы: {results}")  # Отладка
-    connection.close()
-    return results
-
-
-
-# Функция для запроса к VirusTotal API
-def fetch_signatures_from_virustotal(file_path):
-    logging.info(f"Начинаю загрузку файла: {file_path}")
-    headers = {"x-apikey": VT_API_KEY}
-    files = {"file": open(file_path, "rb")}
-
-    try:
-        # Отправка запроса к API
-        logging.debug("Отправка запроса к VirusTotal API...")
-        response = requests.post(VT_URL, headers=headers, files=files)
-
-        # Обработка ответа от API
-        if response.status_code == 200:
-            logging.debug("Ответ от API получен успешно.")
-            result = response.json()
-            hash_value = result.get("data", {}).get("id", None)
-            virus_name = result.get("data", {}).get("attributes", {}).get("meaningful_name", "Unknown")
-
-            # Если хеш найден, сохраняем его в базу
-            if hash_value:
-                logging.info(f"Сигнатура найдена: {virus_name}, хеш: {hash_value}")
-                add_signature_to_db(hash_value, virus_name)
-                logging.info(f"Сигнатура добавлена в базу данных: {virus_name} ({hash_value})")
-                return f"Сигнатура добавлена: {virus_name} ({hash_value})"
-            else:
-                logging.warning("Ошибка: не удалось получить данные о сигнатуре.")
-                return f"Ошибка: невозможно получить данные о сигнатуре."
-        else:
-            # Ошибка API
-            logging.error(f"Ошибка API: {response.status_code} {response.text}")
-            return f"Ошибка API: {response.status_code} {response.text}"
-    except Exception as e:
-        # Ошибка соединения
-        logging.exception(f"Ошибка при соединении с сервером: {str(e)}")
-        return f"Ошибка соединения: {str(e)}"
-    finally:
-        # Закрываем файл
-        files["file"].close()
-        logging.debug("Файл закрыт.")
-
-# Вкладка Scan
-class ScanPage(QWidget):
-    def __init__(self):
-        super().__init__()
-        self.init_ui()
-
-    def init_ui(self):
-        layout = QVBoxLayout()
-        self.upload_file_button = QPushButton("Загрузить файл")
-        self.upload_file_button.clicked.connect(self.upload_file_action)
-
-        layout.addWidget(QLabel("Scan Page Content"))
-        layout.addWidget(self.upload_file_button)
-        self.setLayout(layout)
-
-    def upload_file_action(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Выберите файл для анализа")
-        if file_path:
-            result = fetch_signatures_from_virustotal(file_path)
-            QMessageBox.information(self, "Результат", result)
-
-
-# Вкладка History
-class HistoryPage(QWidget):
-    def __init__(self):
-        super().__init__()
-        layout = QVBoxLayout()
-        layout.addWidget(QLabel("History Page Content"))
-        self.setLayout(layout)
-
-
-# Вкладка Quarantine
-class QuarantinePage(QWidget):
-    def __init__(self):
-        super().__init__()
-        layout = QVBoxLayout()
-        layout.addWidget(QLabel("Quarantine Page Content"))
-        self.setLayout(layout)
-
-
-# Вкладка Settings
-class SettingsPage(QWidget):
-    def __init__(self):
-        super().__init__()
-        layout = QVBoxLayout()
-        layout.addWidget(QLabel("Settings Page Content"))
-        self.setLayout(layout)
-
-
-# Вкладка Signatures
-class SignaturesPage(QWidget):
-    def __init__(self):
-        super().__init__()
-        self.init_ui()
-
-    def init_ui(self):
-        layout = QVBoxLayout()
-
-        self.table = QTableWidget()
-        self.table.setColumnCount(2)
-        self.table.setHorizontalHeaderLabels(["Hash", "Virus Name"])
-        self.load_signatures()
-
-        layout.addWidget(QLabel("Signatures"))
-        layout.addWidget(self.table)
-        self.setLayout(layout)
-
-    def load_signatures(self):
-        signatures = get_signatures_from_db()
-        if not signatures:
-            print("Таблица сигнатур пуста!")  # Отладка
-        self.table.setRowCount(len(signatures))
-        for row, (hash_value, virus_name) in enumerate(signatures):
-            self.table.setItem(row, 0, QTableWidgetItem(hash_value))
-            self.table.setItem(row, 1, QTableWidgetItem(virus_name))
-        print(f"Таблица обновлена: {len(signatures)} записей")  # Отладка
-
-
-
-# Основное окно
-class MainWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
-
-        self.setWindowTitle("Antivirus Program")
-        self.setGeometry(100, 100, 800, 600)
-
-        # Создание вкладок
-        self.tabs = QTabWidget()
-        self.setCentralWidget(self.tabs)
-
-        # Добавляем вкладки
-        self.tabs.addTab(ScanPage(), "Scan")
-        self.tabs.addTab(HistoryPage(), "History")
-        self.tabs.addTab(QuarantinePage(), "Quarantine")
-        self.tabs.addTab(SettingsPage(), "Settings")
-        self.tabs.addTab(SignaturesPage(), "Signatures")
-
-
-# Основной запуск приложения
-if __name__ == "__main__":
-    import sys
-    from PyQt5.QtWidgets import QApplication
-
-    initialize_database()
-    app = QApplication(sys.argv)
-    window = MainWindow()
-    window.show()
-    sys.exit(app.exec_())
+# # Функция для загрузки хэшей процессов из файла antivirus.csv
+# def load_antivirus_hashes(file_path):
+#     hashes = set()
+#     with open(file_path, mode='r', newline='') as file:
+#         reader = csv.reader(file)
+#         for row in reader:
+#             if row:  # Пропускаем пустые строки
+#                 hashes.add(row[0])  # Предполагается, что хэш в первом столбце
+#     return hashes

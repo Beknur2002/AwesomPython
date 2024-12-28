@@ -1,1 +1,8 @@
-# API_KEY = "8da69ff389ad791ebe9e588cff3258bdccc36a085cd4c225e2c177f534133f42"
+import pika
+
+try:
+    connection = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
+    print("Connection successful!")
+    connection.close()
+except pika.exceptions.AMQPConnectionError:
+    print("Failed to connect to RabbitMQ. Ensure RabbitMQ is running.")
